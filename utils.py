@@ -12,14 +12,22 @@ import h5py
 import tensorflow as tf
 from tensorflow.contrib.layers.python.layers import batch_norm as batch_norm
 import os
-os.environ['CUDA_VISIBLE_DEVICES'] = '1'
+# os.environ['CUDA_VISIBLE_DEVICES'] = '1'
 
+
+def select_train_test_subjects(dataset, subject_ind):
+    subject_no = len(dataset)
+    test_ind = subject_ind-1;
+    train_ind = np.setdiff1d(np.arange(subject_no), test_ind)
+    train_subjects = [dataset[i] for i in train_ind]
+    test_subject = dataset[test_ind]
+    return train_subjects, test_subject
 
 
 
 def normalize_data(data):
-"""  Normalize N-dimensional data (including time series)
-"""
+    """  Normalize N-dimensional data (including time series)
+    """
     arr = np.reshape(data, [-1])
     mns = np.mean(arr)
     sstd = np.std(arr)
@@ -28,15 +36,15 @@ def normalize_data(data):
 
 
 def load_data(filename):
-""" Load a mat file which contains a Matlab struct
-"""
+    """ Load a mat file which contains a Matlab struct
+    """
     return sc.loadmat(filename, squeeze_me=True, struct_as_record=False)
 
 
 
 def expand_vol_4d(input,dim):
-""" Expand 2D data to 4D
-"""
+    """ Expand 2D data to 4D
+    """
 
     expanded = np.tile(np.expand_dims(np.expand_dims(input, 0), 0), dim)
     return expanded
@@ -44,8 +52,8 @@ def expand_vol_4d(input,dim):
 
 
 def expand_vol_1d(input,dim):
-""" Expand data from 3D to 4D
-"""
+    """ Expand data from 3D to 4D
+    """
 
     expanded = np.tile(np.expand_dims(input, 3), dim)
     return expanded
@@ -53,8 +61,8 @@ def expand_vol_1d(input,dim):
 
 
 def load_big_data(filename, key):
-""" Load a large .mat file in Python
-"""
+    """ Load a large .mat file in Python
+    """
 
     f = h5py.File(filename, 'r')
     data = np.transpose(np.array(f.get(key)))
@@ -73,8 +81,8 @@ def load_several_keys(filename, key1, key2, key3):
 
 
 def load_variables(params):
-""" Load ASL parameters into a dictionary object
-"""
+    """ Load ASL parameters into a dictionary object
+    """
 
     var = {}
     ## Assign each variables
@@ -82,15 +90,50 @@ def load_variables(params):
     var['lambda_blood'] = tf.constant(params['param'].lambda_blood, dtype=np.float32)
     var['T1blood'] = tf.constant(params['param'].T1blood, dtype=np.float32)
     var['T1tissue'] = tf.constant(params['param'].T1tissue, dtype=np.float32)
-    var['PLDs'] = tf.constant(params['param'].PLD, np.float32)
+    var['PLDs'] = tf.constant(params['param'].PLDs, np.float32)
     var['tao'] = tf.constant(params['param'].tao, np.float32)
     var['scalar'] = tf.constant(params['param'].scalar_constant, dtype=np.float32)
     return var
 
 
+def prepare_train_variables(train_subjects):
+    
+    n_subject = len(train_subjects)
+    
+    [nb, kx, ky, nt] = np.shape(train_subjects[0].data['xtrain'])
+    
+    
+    xtrain = train_subjects[0].data['xtrain']
+    ylabel = train_subjects[0].data['ylabel'] + train_subjects[0].data['yund']
+    gt_pwi = train_subjects[0].data['sigData']
+    m0     = train_subjects[0].data['M0']
+    
+    for i in range(n_subject-1):
+        xtrain = np.concatenate((xtrain, train_subjects[i+1].data['xtrain']), axis=0)
+        yfull = train_subjects[i+1].data['ylabel'] + train_subjects[i+1].data['yund']
+        ylabel = np.concatenate((ylabel, yfull), axis=0)
+        gt_pwi = np.concatenate((gt_pwi, train_subjects[i+1].data['sigData']), axis=0)
+        m0 = np.concatenate((m0, train_subjects[i+1].data['M0']), axis=0)
+        
+    m0 = expand_vol_1d(m0, [1, 1, 1, nt])
+    
+    return  xtrain, ylabel, gt_pwi, m0
+
+
+def arrange_test_variables(test_subject):
+    
+    Xtest = test_subject.data['xtrain']
+    Ytest = test_subject.data['ylabel'] + test_subject.data['yund']
+    Yund= test_subject.data['yund'] 
+    
+    return Xtest, Ytest, Yund
+
+
+
+
 def synthetic_prepare_variables(gt_pwi, est_maps, ylabel, M0):
-""" Stack the ASL variables in a 5D array to be given as input to the network
-"""
+    """ Stack the ASL variables in a 5D array to be given as input to the network
+    """
     [nb, nx, ny, nt] = np.shape(gt_pwi)
     
     nparam = np.shape(est_maps)[-1]
@@ -105,9 +148,20 @@ def synthetic_prepare_variables(gt_pwi, est_maps, ylabel, M0):
     return Ytrain 
 
 
+def split_train_validation(data_interval, val_rate):
+    
+    rand_ind = np.random.permutation(data_interval)
+    nval = int(np.round(val_rate*np.size(data_interval)))
+    train_ind = rand_ind[:-nval]
+    val_ind =  rand_ind[-nval:]
+    
+    return train_ind, val_ind
+    
+
+
 def pick_random_test_samples(Xdata, Ylabel, Yund, sample_size = 2):
-""" Function to randomly pick N samples from test data for validation
-"""
+    """ Function to randomly pick N samples from test data for validation
+    """
     
     idx = np.random.randint(0, Xdata.shape[0], sample_size)
     source_img = Xdata[idx]; y_label = Ylabel[idx]; y_und = Yund[idx]
@@ -115,9 +169,9 @@ def pick_random_test_samples(Xdata, Ylabel, Yund, sample_size = 2):
     return source_img, y_label, y_und
 
 
-def generate_batches(Xdata, Ylabel, Yund, Sig, M0, batch_size):
-""" Generate batch of input and output data to be used every iteration of GAN during training
-"""
+def generate_batches(Xdata, Ylabel, Sig, M0, batch_size):
+    """ Generate batch of input and output data to be used every iteration of GAN during training
+    """
 
     shapedata=Xdata.shape
     
@@ -126,7 +180,7 @@ def generate_batches(Xdata, Ylabel, Yund, Sig, M0, batch_size):
     
     xdata_b=Xdata[idx_rnd,...]
     ylabel_b=Ylabel[idx_rnd,...]
-    yund_b = Yund[idx_rnd,...]
+    # yund_b = Yund[idx_rnd,...]
     sig_b = Sig[idx_rnd,...]
     M0_b  = M0[idx_rnd,...]
     
@@ -138,20 +192,20 @@ def generate_batches(Xdata, Ylabel, Yund, Sig, M0, batch_size):
         
         X = arrange_generator(xdata_b, to_add, inds_toadd)
         y = arrange_generator(ylabel_b, to_add, inds_toadd)
-        yund = arrange_generator(yund_b, to_add, inds_toadd)
+        # yund = arrange_generator(yund_b, to_add, inds_toadd)
         sig = arrange_generator(sig_b, to_add, inds_toadd)   
         m0 = arrange_generator(M0_b, to_add, inds_toadd)          
         
     else:
         X=np.copy(xdata_b)                
         y=np.copy(ylabel_b)
-        yund=np.copy(yund_b)
+        # yund=np.copy(yund_b)
         sig=np.copy(sig_b)
         m0=np.copy(M0_b)
 
     X=X.astype(np.float32)
-    y=y.astype(np.float32) + yund.astype(np.float32)
-    yund = yund.astype(np.float32)
+    y=y.astype(np.float32) # + yund.astype(np.float32)
+    # yund = yund.astype(np.float32)
     sig = sig.astype(np.float32)
     m0 = m0.astype(np.float32)
     
@@ -159,7 +213,7 @@ def generate_batches(Xdata, Ylabel, Yund, Sig, M0, batch_size):
     while True:
         for i_batch in range(int(X.shape[0]/batch_size)):
             rng = np.arange(i_batch*batch_size, (i_batch+1)*batch_size)
-            yield (X[rng,...],  y[rng,...], yund[rng,...], sig[rng,...], m0[rng,...])
+            yield (X[rng,...],  y[rng,...], sig[rng,...], m0[rng,...])
         
         
 

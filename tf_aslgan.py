@@ -13,7 +13,7 @@ import numpy as np
 import utils as ut
 from loss_functions import lp_loss, asl_loss
 import os
-os.environ['CUDA_VISIBLE_DEVICES'] = '0' # Remove this when running on a machine without any GPU.
+# os.environ['CUDA_VISIBLE_DEVICES'] = '0' # Remove this when running on a machine without any GPU.
 import matplotlib as mpl
 if os.environ.get('DISPLAY','') == '':
     print('no display found. Using non-interactive Agg backend')
@@ -24,21 +24,32 @@ import matplotlib.pyplot as plt
 
 
 class ASLGAN(object):
-    def __init__(self, sess, batch_size = 10, Xdata = None, Ylabel = None, Sig = None, Yund = None, M0 = None, Params = None):
-        """ Initialize the object
-        """
-
+    def __init__(self, sess, data_type = 'synthetic', batch_size = 10, Xtrain = None, Ytrain = None,  Xtest = None, 
+                      Ytest = None, Ytest_und = None, Sig = None, M0 = None,  Params = None):
+        # Initialize the object
         self.sess = sess
         # Input shape
-        self.height_MR = 70
-        self.width_MR = 70
-        self.channels = 10  # Number of PLDs or time-points
+        if data_type == 'synthetic':
+            self.height_MR = 70
+            self.width_MR = 70
+            self.channels = 10  # Number of PLDs or time-points
+        else:
+            self.height_MR = 40
+            self.width_MR = 40
+            self.channels = 7
+            
         self.output_dim = 2  # number of ASL parameters to estimate (CBF, ATT)
+        self.data_type = data_type
         
-        # Data
-        self.Xdata = Xdata  # 
-        self.Ylabel = Ylabel
-        self.Yund = Yund
+        # Train Data
+        self.Xtrain = Xtrain  # 
+        self.Ytrain = Ytrain
+        
+        # Test Data
+        self.Xtest = Xtest
+        self.Ytest = Ytest
+        self.Ytest_und = Ytest_und
+        
         
         # Number of residual blocks in the generator
         self.n_residual_blocks = 8
@@ -72,16 +83,13 @@ class ASLGAN(object):
         self.common_vars = ut.load_variables(Params)
         
         # Call the batch generation for every iteration of GAN
-        self.data_generator = ut.generate_batches(Xdata, Ylabel, Yund, Sig, M0, self.batch_size)
+        self.data_generator = ut.generate_batches(Xtrain, Ytrain, Sig, M0, self.batch_size)
         
         # Build GAN model
         self.build_model()
         
         
     def build_model(self):
-       """ Build GAN model based on the given variables, GAN networks and loss functions
-       """
-        
         # Create TF placeholder for every variable used in GAN
         self.inputMR=tf.placeholder(tf.float32, shape=[None, self.height_MR, self.width_MR, self.channels])
         self.param_GT=tf.placeholder(tf.float32, shape=[None, self.height_MR, self.width_MR, self.output_dim])
@@ -89,7 +97,7 @@ class ASLGAN(object):
         self.M0 = tf.placeholder(tf.float32, shape=[None, self.height_MR, self.width_MR, self.channels])
         self.train_phase = tf.placeholder(tf.bool, name='phase_train')
         
-        batch_size_tf = tf.shape(self.inputMR)[0]  
+        # batch_size_tf = tf.shape(self.inputMR)[0]  
 
         # Invoke generator network
         self.G, self.layer = self.generator(self.inputMR)     
@@ -115,7 +123,7 @@ class ASLGAN(object):
         self.g_vars = [var for var in t_vars if 'g_' in var.name]
 
         # Define the optimizer type for both D and G networks.
-        with tf.variable_scope(tf.get_variable_scope(),reuse=False)
+        with tf.variable_scope(tf.get_variable_scope(), reuse=False):
             self.d_optim = tf.train.AdamOptimizer(self.learning_rate, beta1=0.5) \
                                   .minimize(self.d_loss, var_list=self.d_vars)
             self.g_optim = tf.train.AdamOptimizer(self.learning_rate, beta1=0.5) \
@@ -129,12 +137,11 @@ class ASLGAN(object):
         self.writer = tf.summary.FileWriter("./summaries", self.sess.graph)
         self.saver = tf.train.Saver()
         
-        
-    def generator(self, inputMR, reuse = False):
-      """ Generator network architecture which is fully convolutional (involving all convolutional layers) 
+    """ Generator network architecture which is fully convolutional (involving all convolutional layers) 
           with PRELU activation. - Used in our MICCAI ASL paper
-      """
-
+    """
+    def generator(self, inputMR, reuse = False):
+     
         with tf.variable_scope('generator_unit', reuse=reuse):
             if (reuse):
                 tf.get_variable_scope().reuse_variables()
@@ -185,10 +192,10 @@ class ASLGAN(object):
 
             return out, out
         
+     # Generator network architecture used in SRGAN (C.Ledig et al CVPR 2017) based on residual block and skip connection.
         
     def generator_residual_blocks(self, inputMR, reuse = False):
-       """ Generator network architecture used in SRGAN (C.Ledig et al CVPR 2017) based on residual block and skip connection.
-       """
+      
         with tf.variable_scope('generator_unit', reuse=reuse):
             if (reuse):
                 tf.get_variable_scope().reuse_variables()
@@ -239,11 +246,11 @@ class ASLGAN(object):
              
             return out, out
 
-
-    def discriminator(self, inputPR, reuse=False)
-     """ A typical classification (discriminator) network architecture with convolutional layers, batch normalization,
-         2D max pooling and dense layer at the end.
-     """
+     # A typical classification (discriminator) network architecture with convolutional layers, batch normalization,
+     # 2D max pooling and dense layer at the end.
+     
+    def discriminator(self, inputPR, reuse=False):
+   
         with tf.variable_scope('discriminator_unit', reuse=reuse):
             if reuse:
                 tf.get_variable_scope().reuse_variables()
@@ -277,11 +284,11 @@ class ASLGAN(object):
             return tf.nn.sigmoid(out), out
         
     
+    
     def discriminator_conv_blocks(self, inputPR, reuse=False):
-       """ Classification (Discriminator) network architecture with the combination of convolutional layers and
-       fully convolutinal (dense) layers. Sigmoid activation function is used at the end.
-       """
-
+      # Classification (Discriminator) network architecture with the combination of convolutional layers and
+      # fully convolutinal (dense) layers. Sigmoid activation function is used at the end.
+       
         with tf.variable_scope('discriminator_unit', reuse=reuse):
             if (reuse):
                 tf.get_variable_scope().reuse_variables()
@@ -348,7 +355,7 @@ class ASLGAN(object):
         
         # For every epoch train D and G networks alternatively
         for epoch in range(epochs):
-            X, y, yund, sig, m0 = next(self.data_generator)
+            X, y, sig, m0 = next(self.data_generator)
             
             
             # Update D network
@@ -367,7 +374,7 @@ class ASLGAN(object):
             
             # For every Nth epoch sample test images and produce/save the associated parameter maps predicted by the generator
             if epoch % save_interval == 0:
-                self.test_MR_source, self.test_ylabel, self.test_yund = ut.pick_random_test_samples(self.Xdata, self.Ylabel, self.Yund, sample_size = 2)
+                self.test_MR_source, self.test_ylabel, self.test_yund = ut.pick_random_test_samples(self.Xtest, self.Ytest, self.Ytest_und, sample_size = 2)
                 self.test_sample_images(epoch)
     
     
@@ -396,9 +403,9 @@ class ASLGAN(object):
         gen_param = self.evaluate(self.test_MR_source)
         
        # Get either CBF or ATT maps - 0:CBF, 1:ATT
-        est_param = gen_param[:,:,:,1]
-        gt_param =  self.test_yund[:,:,:,1] + self.test_ylabel[:,:,:,1]
-        y_und = self.test_yund[:,:,:,1]
+        est_param = gen_param[:,:,:,0]
+        gt_param =  self.test_ylabel[:,:,:,0]
+        y_und = self.test_yund[:,:,:,0]
 
         # Save generated images and the high resolution originals
         titles = ['Initial', 'Generated', 'Original']
@@ -410,16 +417,15 @@ class ASLGAN(object):
                  axs[row, col].set_title(titles[col])
                  axs[row, col].axis('off')
              cnt += 1
-        fig.savefig("att_images/att_%d.png" % epoch)
+        fig.savefig("%s_cbf_images/cbf_%d.png" %(self.data_type,epoch))
         plt.close()
     
     
     
 
     def save(self, checkpoint_dir, step):
-    """ Save the trained model 
-     """
-	 
+    # Save the trained model 
+    
         model_name = "ASL_GAN_Synthetic.model"
         
         if not os.path.exists(checkpoint_dir):
@@ -430,9 +436,8 @@ class ASLGAN(object):
                         global_step=step)
 
     def load(self, checkpoint_dir):
-    """ Load the training model
-    """
-	
+    # Load the training model
+    
         print(" [*] Reading checkpoints...")
 
         ckpt = tf.train.get_checkpoint_state(checkpoint_dir)
@@ -472,30 +477,79 @@ class ASLGAN(object):
         return loss, lpterm, aslterm, bceterm        
 
 
+class Subject():
+    def __init__(self, sub, data):
+        self.sub = sub
+        self.data = data
+
+
 
 if __name__ == '__main__':
-""" Main script for running synthetic dataset with GAN """
+ # Main script for running synthetic & real multi PLD ASL dataset with GAN
 
-    # Load the synthetic dataset
-    gt_pwi = ut.load_big_data('synthetic_net_sub_data_gt_pwi.mat', 'gt_pwi')
-    xtrain = ut.load_big_data('synthetic_net_sub_data_in_pwi.mat', 'in_pwi')
-    print(np.shape(xtrain))
+    data_type = 'real'
+    realSubjectID = 1
+    synthetic_test_data_rate = 0.05
+    
+    if data_type == 'synthetic':
 
-    # Load the parameter maps and M0 data 
-    est_maps, ylabel, m0 = ut.load_several_keys('synthetic_net_sub_data_maps.mat', 'est_maps', 'ylabel', 'M0')
-    # Load the common ASL parameters for synthetic data
-    params = ut.load_data('synthetic_ni_common_vars.mat')
+        # Load the synthetic dataset
+        gt_sig = ut.load_big_data('SyntheticDataForGAN/synthetic_net_sub_data_gt_pwi.mat', 'gt_pwi')
+        xdata = ut.load_big_data('SyntheticDataForGAN/synthetic_net_sub_data_in_pwi.mat', 'in_pwi')
+        print(np.shape(xdata))
     
-    nt = np.shape(gt_pwi)[-1]
+        # Load the parameter maps and M0 data 
+        est_maps, ylabel, m0_sig = ut.load_several_keys('SyntheticDataForGAN/synthetic_net_sub_data_maps.mat', 'est_maps', 'ylabel', 'M0')
+        
+        # Split train/test    
+        sample_no = np.shape(xdata)[0]
+        train_ind, val_ind = ut.split_train_validation(np.arange(sample_no), synthetic_test_data_rate)
+        
+        # Training variables
+        xtrain = xdata[train_ind]
+        ytrain = ylabel[train_ind] + est_maps[train_ind]
+        gt_pwi = gt_sig[train_ind]
+        m0 = m0_sig[train_ind]
+        
+        # Test variables  
+        xtest = xdata[val_ind]
+        ytest = ylabel[val_ind] + est_maps[val_ind]
+        yund = est_maps[val_ind]
+        
+        # Load the common ASL parameters for synthetic data
+        params = ut.load_data('SyntheticDataForGAN/synthetic_ni_common_vars.mat')
     
-    # Expand 3D M0 data along time to make it 4D
-    m0 = ut.expand_vol_1d(m0, [1, 1, 1, nt])
+        
+        # Expand 3D M0 data along time to make it 4D
+        nt = np.shape(gt_pwi)[-1]
+        m0 = ut.expand_vol_1d(m0, [1, 1, 1, nt])
+    
+    else:
+        
+        dataset = []
+
+        dataset.append(Subject('sub1', ut.load_data('RealDataForGAN/multiPLD_real_sub1.mat')))
+        dataset.append(Subject('sub2', ut.load_data('RealDataForGAN/multiPLD_real_sub2.mat')))
+        dataset.append(Subject('sub3', ut.load_data('RealDataForGAN/multiPLD_real_sub3.mat')))
+        dataset.append(Subject('sub4', ut.load_data('RealDataForGAN/multiPLD_real_sub4.mat')))
+        dataset.append(Subject('sub5', ut.load_data('RealDataForGAN/multiPLD_real_sub5.mat')))
+        
+        params = ut.load_data('RealDataForGAN/multi_PLD_real_common_vars.mat')
+
+        train_subjects, test_subject = ut.select_train_test_subjects(dataset, subject_ind=realSubjectID)
+        
+        xtrain, ytrain, gt_pwi, m0 = ut.prepare_train_variables(train_subjects)
+        print(np.shape(xtrain))
+        
+        xtest, ytest, yund = ut.arrange_test_variables(test_subject)
+        
+        
 
     config = tf.ConfigProto(allow_soft_placement=True)
     with tf.Session(config=config) as sess:
         # Initialize the ASLGAN object
-        aslg = ASLGAN(sess, batch_size = 100, Xdata = xtrain, Ylabel = ylabel, Sig = gt_pwi, 
-                                         Yund = est_maps, M0 = m0, Params = params)
+        aslg = ASLGAN(sess, data_type = data_type, batch_size = 100, Xtrain = xtrain, Ytrain = ytrain, Xtest = xtest, Ytest = ytest,
+                       Ytest_und = yund, Sig = gt_pwi, M0 = m0, Params = params)
 
         print('GAN training is starting..')
         start_time = tt.time()
