@@ -7,6 +7,7 @@ Created on Tue Aug 28 14:06:53 2018
 
 
 import numpy as np
+import random
 import scipy.io as sc
 import h5py
 import tensorflow as tf
@@ -148,15 +149,31 @@ def synthetic_prepare_variables(gt_pwi, est_maps, ylabel, M0):
     return Ytrain 
 
 
-def split_train_validation(data_interval, val_rate):
-    
-    rand_ind = np.random.permutation(data_interval)
-    nval = int(np.round(val_rate*np.size(data_interval)))
-    train_ind = rand_ind[:-nval]
-    val_ind =  rand_ind[-nval:]
+def split_train_validation(data_interval, val_rate, consecutive_order = False, patch_size_per_im = 4):
+    """ Function that returns the randomly selected data indexes to split data into train and validation.
+        If the data samples are ordered consecutively (in patch-wise case), then the random selection of the
+        indexes are also done from those consecutive index groups to make sure that each selected group can form up the
+        entire image.
+    """
+    if consecutive_order:
+        number_of_images = np.size(data_interval)/patch_size_per_im
+        index_splits = np.split(data_interval, number_of_images)
+        nval = int(np.round(val_rate*len(index_splits)))
+        rand_ind_val = np.random.choice(np.arange(len(index_splits)), nval, replace=False)
+        rand_ind_train = np.setdiff1d(np.arange(len(index_splits)), rand_ind_val)
+        
+        index_splits = np.array(index_splits)
+        train_ind = np.hstack(index_splits[rand_ind_train,:])
+        val_ind = np.hstack(index_splits[rand_ind_val,:])
+        
+    else:
+        rand_ind = np.random.permutation(data_interval)
+        nval = int(np.round(val_rate*np.size(data_interval)))
+        train_ind = rand_ind[:-nval]
+        val_ind =  rand_ind[-nval:]
     
     return train_ind, val_ind
-    
+
 
 
 def pick_random_test_samples(Xdata, Ylabel, Yund, sample_size = 2):

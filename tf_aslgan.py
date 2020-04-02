@@ -487,7 +487,7 @@ class Subject():
 if __name__ == '__main__':
  # Main script for running synthetic & real multi PLD ASL dataset with GAN
 
-    data_type = 'real'
+    data_type = 'synthetic'
     realSubjectID = 1
     synthetic_test_data_rate = 0.05
     
@@ -503,7 +503,7 @@ if __name__ == '__main__':
         
         # Split train/test    
         sample_no = np.shape(xdata)[0]
-        train_ind, val_ind = ut.split_train_validation(np.arange(sample_no), synthetic_test_data_rate)
+        train_ind, val_ind = ut.split_train_validation(np.arange(sample_no), synthetic_test_data_rate, consecutive_order = True)
         
         # Training variables
         xtrain = xdata[train_ind]
