@@ -524,7 +524,7 @@ if __name__ == '__main__':
         nt = np.shape(gt_pwi)[-1]
         m0 = ut.expand_vol_1d(m0, [1, 1, 1, nt])
     
-    else:
+    elif data_type == 'real':
         
         dataset = []
 
